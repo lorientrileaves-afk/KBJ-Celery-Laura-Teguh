@@ -1,0 +1,57 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: kbj
+      RABBITMQ_DEFAULT_PASS: kbj2026
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 12
+  worker:
+    build: .
+    command: celery -A app.celery_app:app worker -l INFO -E --concurrency=2 -Q fanout_a,fanout_b,topic_sensor,topic_system,wildcard_single,wildcard_multi
+    volumes:
+      - ./output:/code/output
+    environment: &env
+      CELERY_BROKER_URL: amqp://kbj:kbj2026@rabbitmq:5672//
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      OUTPUT_DIR: /code/output
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  flower:
+    build: .
+    command: celery -A app.celery_app:app flower --port=5555
+    ports:
+      - "5555:5555"
+    environment: *env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  producer:
+    build: .
+    profiles: ["manual"]
+    command: python producer.py --scenario all --count 8
+    environment: *env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
